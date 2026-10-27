@@ -1,0 +1,11 @@
+node_modules/
+www/
+android/
+assets/build/
+.claude/
+keystore/
+*.p12
+*.pem
+*.apk
+.DS_Store
+tools/

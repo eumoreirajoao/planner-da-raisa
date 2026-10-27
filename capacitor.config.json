@@ -1,0 +1,13 @@
+{
+  "appId": "br.com.plannerdaraisa",
+  "appName": "Planner da Raísa",
+  "webDir": "www",
+  "android": {
+    "adjustMarginsForEdgeToEdge": "auto"
+  },
+  "plugins": {
+    "LocalNotifications": {
+      "iconColor": "#A98BDB"
+    }
+  }
+}
