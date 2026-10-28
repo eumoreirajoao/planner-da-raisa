@@ -75,6 +75,7 @@ jobs:
           path: planner-da-raisa.apk
 
       - name: Publicar a atualização no Supabase
+        if: ${{ vars.SUPABASE_URL != '' }}
         env:
           SUPABASE_URL: ${{ vars.SUPABASE_URL }}
           SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
