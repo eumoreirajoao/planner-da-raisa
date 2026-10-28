@@ -79,18 +79,22 @@ jobs:
           SERVICE_KEY: ${{ secrets.SUPABASE_SERVICE_KEY }}
         run: |
           set -euo pipefail
+          if [ -z "${SERVICE_KEY:-}" ]; then
+            echo "Sem SUPABASE_SERVICE_KEY: o APK fica só nesta montagem, sem aviso de atualização." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
           BASE="${SUPABASE_URL%/}/storage/v1/object"
           NEW="planner-da-raisa-$VERSION.apk"
           OLD=$(curl -sf "$BASE/public/atualizacoes/latest.json?t=$(date +%s)" | python3 -c 'import json,sys; print(json.load(sys.stdin).get("apk",""))' || true)
           curl -sf -X POST "$BASE/atualizacoes/$NEW" \
-            -H "Authorization: Bearer $SERVICE_KEY" -H "x-upsert: true" \
+            -H "apikey: $SERVICE_KEY" -H "Authorization: Bearer $SERVICE_KEY" -H "x-upsert: true" \
             -H "Content-Type: application/vnd.android.package-archive" \
             --data-binary @planner-da-raisa.apk > /dev/null
           printf '{"build":%s,"version":"%s","apk":"%s"}' "$BUILD" "$VERSION" "$NEW" > latest.json
           curl -sf -X POST "$BASE/atualizacoes/latest.json" \
-            -H "Authorization: Bearer $SERVICE_KEY" -H "x-upsert: true" -H "cache-control: no-cache" \
+            -H "apikey: $SERVICE_KEY" -H "Authorization: Bearer $SERVICE_KEY" -H "x-upsert: true" -H "cache-control: no-cache" \
             -H "Content-Type: application/json" --data-binary @latest.json > /dev/null
           if [ -n "$OLD" ] && [ "$OLD" != "$NEW" ]; then
-            curl -sf -X DELETE "$BASE/atualizacoes/$OLD" -H "Authorization: Bearer $SERVICE_KEY" > /dev/null || true
+            curl -sf -X DELETE "$BASE/atualizacoes/$OLD" -H "apikey: $SERVICE_KEY" -H "Authorization: Bearer $SERVICE_KEY" > /dev/null || true
           fi
           echo "Link para instalar: $BASE/public/atualizacoes/$NEW" >> "$GITHUB_STEP_SUMMARY"
