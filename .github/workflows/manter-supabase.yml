@@ -1,0 +1,34 @@
+name: Manter o Supabase acordado
+
+# O plano gratuito do Supabase pausa o projeto depois de uns 7 dias sem uso,
+# e aí o app da Raísa perde o login e o aviso de atualização.
+# Esta rotina consulta o banco a cada 3 dias para ele não ser pausado.
+# Se a consulta falhar, a rotina fica vermelha e o GitHub manda um e-mail.
+
+on:
+  schedule:
+    - cron: "17 12 */3 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  ping:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Consultar o banco
+        env:
+          SUPABASE_URL: ${{ vars.SUPABASE_URL }}
+          SUPABASE_ANON_KEY: ${{ vars.SUPABASE_ANON_KEY }}
+        run: |
+          set -euo pipefail
+          URL="${SUPABASE_URL%/}/rest/v1/planner_docs?select=key&limit=1"
+          CODE=$(curl -s -m 60 -o resposta.txt -w "%{http_code}" "$URL" -H "apikey: $SUPABASE_ANON_KEY" || echo 000)
+          echo "Resposta do Supabase: HTTP $CODE"
+          if [ "$CODE" != "200" ]; then
+            cat resposta.txt || true
+            echo "O Supabase não respondeu. Veja se o projeto foi pausado em https://supabase.com/dashboard" >> "$GITHUB_STEP_SUMMARY"
+            exit 1
+          fi
+          echo "Supabase no ar (HTTP 200)." >> "$GITHUB_STEP_SUMMARY"
