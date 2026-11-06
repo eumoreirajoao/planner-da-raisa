@@ -1857,7 +1857,8 @@ async function askNotifPermission(){
 /* ---------- modo aplicativo: login, Supabase e atualizações ---------- */
 function loadScript(src){ return new Promise((res, rej) => { const s = document.createElement('script'); s.src = src; s.onload = res; s.onerror = rej; document.head.appendChild(s); }); }
 function supaDb(sb, uid){
-  const fail = e => { throw { code: e && (e.code === '42501' || e.code === 'PGRST301') ? 'invalid_argument' : 'unavailable' }; };
+  /* acesso vencido ou ainda sem renovar (42501, PGRST301) é passageiro: tenta de novo em vez de desligar a sincronização */
+  const fail = () => { throw { code: 'unavailable' }; };
   return { doc(path){
     const key = path.replace(/^planner\//, '');
     return {
@@ -1894,18 +1895,26 @@ function loginScreen(sb){
     const msg = t => { box.querySelector('#lmsg').textContent = t; };
     const creds = () => ({ email: box.querySelector('#lmail').value.trim(), password: box.querySelector('#lpass').value });
     const done = s => { box.remove(); resolve(s); };
+    /* só diz "e-mail ou senha" quando é isso mesmo; servidor fora do ar ganha mensagem própria */
+    const why = error => {
+      const m = (error && error.message) || '', st = (error && error.status) || 0, code = (error && error.code) || '';
+      if (/confirm/i.test(m) || code === 'email_not_confirmed') return 'Confirme seu e-mail pelo link que enviamos e toque em Entrar de novo.';
+      if (code === 'invalid_credentials' || /invalid login credentials/i.test(m)) return 'E-mail ou senha não conferem.';
+      if (!st || st >= 500 || /fetch|network|timeout/i.test(m)) return 'Não consegui falar com o servidor do planner. Confira a internet e tente de novo daqui a pouco.';
+      return 'Não deu para entrar (' + (st ? st + ': ' : '') + m + ').';
+    };
     box.querySelector('#lform').addEventListener('submit', async e => {
       e.preventDefault(); msg('Entrando…');
-      const { data, error } = await sb.auth.signInWithPassword(creds());
-      if (error) return msg(/confirm/i.test(error.message) ? 'Confirme seu e-mail pelo link que enviamos e toque em Entrar de novo.' : /fetch|network/i.test(error.message) ? 'Sem internet. Conecte e tente de novo.' : 'E-mail ou senha não conferem.');
-      done(data.session);
+      let res; try { res = await sb.auth.signInWithPassword(creds()); } catch (err) { return msg(why(err)); }
+      if (res.error) return msg(why(res.error));
+      done(res.data.session);
     });
     box.querySelector('#lnew').addEventListener('click', async () => {
       const c = creds();
       if (!c.email || c.password.length < 6) return msg('Preencha o e-mail e uma senha com pelo menos 6 caracteres.');
       msg('Criando conta…');
       const { data, error } = await sb.auth.signUp(c);
-      if (error) return msg('Não foi possível criar a conta: ' + error.message);
+      if (error) return msg(why(error));
       if (data.session) return done(data.session);
       msg('Conta criada. Abra o e-mail de confirmação e depois toque em Entrar.');
     });
@@ -1951,13 +1960,35 @@ if (IS_APP) (async () => {
   if (!cfg.supabaseUrl || !cfg.supabaseKey) { setStatus('warn', 'Salvo só neste aparelho'); rescheduleAll(); return; }
   try { await loadScript('vendor/supabase.js'); } catch { setStatus('warn', 'Salvo só neste aparelho'); rescheduleAll(); return; }
   const sb = window.supabase.createClient(cfg.supabaseUrl, cfg.supabaseKey, { auth: { persistSession: true, autoRefreshToken: true, detectSessionInUrl: false } });
-  let session = (await sb.auth.getSession()).data.session;
-  if (!session) session = await loginScreen(sb);
-  const uid = session.user.id;
-  SB = sb; db = supaDb(sb, uid); assetsNS = supaAssets(sb, uid);
-  setStatus();
-  pull('config'); pull('notes-tree'); pull(pageKey());
-  syncUpcoming(sb);
+  /* O acesso do Supabase vence a cada hora e é renovado pela internet. Se a renovação falhar
+     (sem sinal, servidor fora do ar), o getSession() demora ~1 min e volta vazio: isso NÃO é
+     "saiu da conta". Por isso o app segue com o login guardado no aparelho e só pede e-mail e
+     senha quando o Supabase avisa que a conta saiu de verdade (SIGNED_OUT). */
+  const authKey = 'sb-' + new URL(cfg.supabaseUrl).hostname.split('.')[0] + '-auth-token';
+  const savedUser = () => { try { const v = JSON.parse(localStorage.getItem(authKey) || 'null'); return v && v.user && v.user.id ? v.user : null; } catch { return null; } };
+  let uid = null, asking = false;
+  const connect = id => {
+    uid = id; SB = sb; db = supaDb(sb, id); assetsNS = supaAssets(sb, id);
+    setStatus();
+    pull('config'); pull('notes-tree'); pull(pageKey());
+    syncUpcoming(sb);
+  };
+  const askLogin = () => {
+    if (asking) return; asking = true; db = null; setStatus('warn', 'Entre de novo para sincronizar');
+    loginScreen(sb).then(s => { asking = false; connect(s.user.id); });
+  };
+  sb.auth.onAuthStateChange((ev, s) => {
+    /* nada de await aqui dentro: o Supabase trava se o aviso chamar o próprio Supabase */
+    if (ev === 'SIGNED_OUT') setTimeout(askLogin, 0);
+    else if (ev === 'TOKEN_REFRESHED' && s && uid) setTimeout(() => { setStatus(); pull(pageKey()); }, 0);
+  });
+  const saved = savedUser();
+  if (saved) {
+    connect(saved.id);
+    sb.auth.getSession().then(({ data }) => {
+      if (!data.session && savedUser()) setStatus('warn', 'Sem conexão com o servidor: salvo neste aparelho');
+    }, () => {});
+  } else askLogin();
 })();
 
 (async () => {
